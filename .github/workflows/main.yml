@@ -25,13 +25,15 @@ jobs:
     - name: Integrating FinaSU with KPM support
       run: |
         echo "[-] Cloning FinaSU repo..."
+        rm -rf KernelSU
         git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU
 
         echo "[-] Setup FinaSU and KPM hooks..."
         chmod +x ./KernelSU/kernel/setup.sh
         export KSU_KPM_SUPPORT=y
         ./KernelSU/kernel/setup.sh
-        rm -rf KernelSU
+        
+        rm -f KernelSU || rm -rf KernelSU
         git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU
 
         # إنشاء مجلد رؤوس وهمي لتوافق 4.19 دون تعديل السورس
@@ -86,7 +88,6 @@ jobs:
         echo "STRIP=llvm-strip" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
         echo "ARCH=arm64" >> $GITHUB_ENV
-        # إضافة تعريف static_assert توافقياً لتفادي الخطأ في الأنوية القديمة دون المساس بالسورس
         echo "KCFLAGS=-w -D'static_assert(cond, msg)=_Static_assert(cond, msg)' -D'MODULE_IMPORT_NS(x)=' -I$(pwd)/include -I$(pwd)/out/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -I$(pwd)/out/security/selinux/ss" >> $GITHUB_ENV
         echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> $GITHUB_ENV
 
