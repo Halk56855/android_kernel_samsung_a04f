@@ -36,10 +36,15 @@ jobs:
         rm -f KernelSU || rm -rf KernelSU
         git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU
 
-        # التأكد من حذف وحقن التعديل بشكل صحيح لملف uts_view.c لمنع أخطاء static_assert في أنوية 4.19
+        # تجاوز وحذف أخطاء static_assert في ملفات الفيتشرات لضمان التوافق مع أنوية 4.19
         if [ -f "drivers/kernelsu/feature/uts_view.c" ]; then
           sed -i '/static_assert/d' drivers/kernelsu/feature/uts_view.c
           echo "[-] Successfully removed static_assert from uts_view.c"
+        fi
+
+        if [ -f "drivers/kernelsu/feature/netisolate.c" ]; then
+          sed -i '/static_assert/d' drivers/kernelsu/feature/netisolate.c
+          echo "[-] Successfully removed static_assert from netisolate.c"
         fi
 
         # إنشاء مجلد رؤوس وهمي لتوافق 4.19 دون تعديل السورس
