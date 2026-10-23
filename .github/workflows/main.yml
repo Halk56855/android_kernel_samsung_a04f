@@ -72,4 +72,73 @@ jobs:
         echo "CROSS_COMPILE=$GCC_PATH/aarch64-none-linux-gnu-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
         echo "CC=clang" >> $GITHUB_ENV
-        echo "LD=ld
+        echo "LD=ld.lld" >> $GITHUB_ENV
+        echo "AR=llvm-ar" >> $GITHUB_ENV
+        echo "NM=llvm-nm" >> $GITHUB_ENV
+        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+        echo "STRIP=llvm-strip" >> $GITHUB_ENV
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "KCFLAGS=-w -I$(pwd)/out/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -I$(pwd)/out/security/selinux/ss" >> $GITHUB_ENV
+        echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> $GITHUB_ENV
+
+    - name: Configure and Compile Kernel for ${{ matrix.config }}
+      run: |
+        echo "Building with config: ${{ matrix.config }}"
+        make -C $(pwd) O=$(pwd)/out ${{ matrix.config }}
+
+        sed -i 's/CONFIG_IKHEADERS=y/CONFIG_IKHEADERS=n/g' $(pwd)/out/.config
+
+        if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"-FinaSU-KPM-${{ inputs.version }}\"/" out/.config
+        else
+            sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"-FinaSU-KPM-BETA\"/" out/.config
+        fi
+
+        make -C $(pwd) O=$(pwd)/out olddefconfig
+
+        make -C $(pwd) O=$(pwd)/out prepare
+        make -C $(pwd) O=$(pwd)/out scripts
+        make -C $(pwd) O=$(pwd)/out security/
+
+        make -C $(pwd) O=$(pwd)/out -j$(nproc) || make -C $(pwd) O=$(pwd)/out -j1
+
+    - name: Get kernel version
+      id: version
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [ -z "$VERSION" ]; then VERSION="BETA"; fi
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Download FinaSU Manager APK
+      run: |
+        echo "[-] Fetching FinaSU Manager APK release..."
+        LATEST_URL=$(curl -s https://api.github.com/repos/LyraVoid/FinaSU/releases/latest | jq -r '.assets[]? | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+        if [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != "null" ]; then
+          echo "[-] Downloading APK from: $LATEST_URL"
+          wget -q "$LATEST_URL" -O FinaSU-Manager.apk
+        else
+          echo "[-] APK not found in latest release, skipping manager download."
+        fi
+
+    - name: Package AnyKernel3
+      run: |
+        DATE=$(date -u +"%Y-%m-%d")
+        CONFIG_NAME=$(basename ${{ matrix.config }} _defconfig | tr '/' '-')
+
+        git clone https://github.com/DaniTheSillyFem/AnyKernel3 --depth 1
+
+        cp out/arch/arm64/boot/Image AnyKernel3/Image
+
+        cd AnyKernel3
+        zip -r9 "../FinaSU-${CONFIG_NAME}-${{ steps.version.outputs.version }}-${DATE}.zip" . -x ".git/*"
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: FinaSU-Kernel-${{ matrix.config }}
+        path: |
+          FinaSU-*.zip
+          FinaSU-Manager.apk
