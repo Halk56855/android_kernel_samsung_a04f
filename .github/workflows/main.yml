@@ -1,0 +1,144 @@
+name: Build All Kernel Variants, FinaSU, KPM Enforcing
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        config: 
+          - a04_defconfig
+          - a04_00_defconfig
+          - gki_defconfig
+
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v7.0.1
+
+    - name: Integrating FinaSU with KPM support
+      run: |
+        echo "[-] Cloning FinaSU repo..."
+        git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU[span_0](start_span)[span_0](end_span)
+
+        echo "[-] Setup FinaSU and KPM hooks..."
+        chmod +x ./KernelSU/kernel/setup.sh
+        export KSU_KPM_SUPPORT=y
+        ./KernelSU/kernel/setup.sh
+        rm -rf KernelSU
+        git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU[span_1](start_span)[span_1](end_span)
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison flex libssl-dev gcc g++ clang python3 \
+          libncurses5-dev ccache make git zip wget xz-utils \
+          device-tree-compiler libfdt-dev gcc-arm-linux-gnueabi cpio jq
+
+    - name: Prepare Toolchains directories
+      run: |
+        mkdir -p toolchain/gcc
+        mkdir -p toolchain/clang
+
+    - name: Download GCC & Clang Toolchain
+      run: |
+        cd toolchain/gcc
+        wget -q --show-progress --retry-connrefused --waitretry=2 --read-timeout=30 -t 5 \
+          https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz -O gcc.tar.xz || \
+        wget -q --show-progress \
+          https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz -O gcc.tar.xz
+        tar -xf gcc.tar.xz -C ./
+
+        cd ../clang
+        wget -q --show-progress \
+          https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/clang-r383902.tar.gz -O clang.tar.gz
+        mkdir -p host/linux-x86/clang-r383902
+        tar -xzf clang.tar.gz -C host/linux-x86/clang-r383902
+
+    - name: Set Environment Variables
+      run: |
+        CLANG_PATH="$(pwd)/toolchain/clang/host/linux-x86/clang-r383902/bin"
+        GCC_PATH="$(pwd)/toolchain/gcc/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin"
+
+        echo "$CLANG_PATH" >> $GITHUB_PATH
+
+        echo "CROSS_COMPILE=$GCC_PATH/aarch64-none-linux-gnu-" >> $GITHUB_ENV
+        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "LD=ld.lld" >> $GITHUB_ENV
+        echo "AR=llvm-ar" >> $GITHUB_ENV
+        echo "NM=llvm-nm" >> $GITHUB_ENV
+        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+        echo "STRIP=llvm-strip" >> $GITHUB_ENV
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "KCFLAGS=-w -I$(pwd)/out/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -I$(pwd)/out/security/selinux/ss" >> $GITHUB_ENV
+        echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> $GITHUB_ENV
+
+    - name: Configure and Compile Kernel for ${{ matrix.config }}
+      run: |
+        echo "Building with config: ${{ matrix.config }}"
+        make -C $(pwd) O=$(pwd)/out ${{ matrix.config }}
+
+        sed -i 's/CONFIG_IKHEADERS=y/CONFIG_IKHEADERS=n/g' $(pwd)/out/.config
+
+        if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"-FinaSU-KPM-${{ inputs.version }}\"/" out/.config
+        else
+            sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"-FinaSU-KPM-BETA\"/" out/.config
+        fi
+
+        make -C $(pwd) O=$(pwd)/out olddefconfig
+
+        make -C $(pwd) O=$(pwd)/out prepare
+        make -C $(pwd) O=$(pwd)/out scripts
+        make -C $(pwd) O=$(pwd)/out security/
+
+        make -C $(pwd) O=$(pwd)/out -j$(nproc) || make -C $(pwd) O=$(pwd)/out -j1
+
+    - name: Get kernel version
+      id: version
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [ -z "$VERSION" ]; then VERSION="BETA"; fi
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Download FinaSU Manager APK
+      run: |
+        echo "[-] Fetching FinaSU Manager APK release..."
+        LATEST_URL=$(curl -s https://api.github.com/repos/LyraVoid/FinaSU/releases/latest | jq -r '.assets[]? | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+        if [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != "null" ]; then
+          echo "[-] Downloading APK from: $LATEST_URL"
+          wget -q "$LATEST_URL" -O FinaSU-Manager.apk
+        else
+          echo "[-] APK not found in latest release, skipping manager download."
+        fi
+
+    - name: Package AnyKernel3
+      run: |
+        DATE=$(date -u +"%Y-%m-%d")
+        CONFIG_NAME=$(basename ${{ matrix.config }} _defconfig | tr '/' '-')
+
+        git clone https://github.com/DaniTheSillyFem/AnyKernel3 --depth 1
+
+        cp out/arch/arm64/boot/Image AnyKernel3/Image
+
+        cd AnyKernel3
+        zip -r9 "../FinaSU-${CONFIG_NAME}-${{ steps.version.outputs.version }}-${DATE}.zip" . -x ".git/*"
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: FinaSU-Kernel-${{ matrix.config }}
+        path: |
+          FinaSU-*.zip
+          FinaSU-Manager.apk
