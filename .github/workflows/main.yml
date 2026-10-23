@@ -33,6 +33,9 @@ jobs:
         export KSU_KPM_SUPPORT=y
         ./KernelSU/kernel/setup.sh
         
+        # تجاوز مشكلة static_assert في الأنوية القديمة ضمن كود FinaSU المضاف
+        sed -i '/static_assert/d' drivers/kernelsu/feature/uts_view.c || true
+        
         rm -f KernelSU || rm -rf KernelSU
         git clone -b master https://github.com/LyraVoid/FinaSU.git KernelSU
 
@@ -88,7 +91,7 @@ jobs:
         echo "STRIP=llvm-strip" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
         echo "ARCH=arm64" >> $GITHUB_ENV
-        echo "KCFLAGS=-w -D'static_assert(cond, msg)=_Static_assert(cond, msg)' -D'MODULE_IMPORT_NS(x)=' -I$(pwd)/include -I$(pwd)/out/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -I$(pwd)/out/security/selinux/ss" >> $GITHUB_ENV
+        echo "KCFLAGS=-w -D'MODULE_IMPORT_NS(x)=' -I$(pwd)/include -I$(pwd)/out/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -I$(pwd)/out/security/selinux/ss" >> $GITHUB_ENV
         echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> $GITHUB_ENV
 
     - name: Configure and Compile Kernel for ${{ matrix.config }}
